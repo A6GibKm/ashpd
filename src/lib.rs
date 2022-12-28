@@ -5,6 +5,7 @@
     html_favicon_url = "https://raw.githubusercontent.com/bilelmoussaoui/ashpd/master/ashpd-demo/data/icons/com.belmoussaoui.ashpd.demo-symbolic.svg"
 )]
 #![doc = include_str!("../README.md")]
+#![feature(linux_pidfd)]
 #[cfg(all(all(feature = "gtk3", feature = "gtk4"), not(doc)))]
 compile_error!("You can't enable both GTK 3 & GTK 4 features at once");
 #[cfg(all(all(feature = "tokio", feature = "async-std"), not(doc)))]

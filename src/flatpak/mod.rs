@@ -31,6 +31,8 @@
 pub(crate) const DESTINATION: &str = "org.freedesktop.portal.Flatpak";
 pub(crate) const PATH: &str = "/org/freedesktop/portal/Flatpak";
 
+#[cfg(linux_pidfd_is_in_std)]
+use std::os::{fd::FromRawFd, linux::process::PidFd};
 use std::{
     collections::HashMap, ffi::CString, fmt::Debug, os::fd::AsFd, os::unix::ffi::OsStrExt,
     path::Path,
@@ -46,6 +48,9 @@ use crate::{
     helpers::{call_method, receive_signal, session_connection},
     Error,
 };
+
+#[cfg(not(linux_pidfd_is_in_std))]
+type PidFd = u32;
 
 #[bitflags]
 #[derive(Serialize_repr, Deserialize_repr, PartialEq, Eq, Copy, Clone, Debug, Type)]
@@ -305,8 +310,6 @@ impl<'a> Flatpak<'a> {
         receive_signal(self.inner(), "SpawnExited").await
     }
 
-    // FIXME Spawn should return a std::os::linux::process::PidFd
-    // see https://github.com/rust-lang/rust/issues/82971.
     /// This methods let you start a new instance of your application,
     /// optionally enabling a tighter sandbox.
     ///
@@ -338,7 +341,7 @@ impl<'a> Flatpak<'a> {
         envs: HashMap<&str, &str>,
         flags: BitFlags<SpawnFlags>,
         options: SpawnOptions<'a>,
-    ) -> Result<u32, Error> {
+    ) -> Result<PidFd, Error> {
         let cwd_path = CString::new(cwd_path.as_ref().as_os_str().as_bytes())
             .expect("The `cwd_path` should not contain a trailing 0 bytes");
         let argv = argv
@@ -350,7 +353,7 @@ impl<'a> Flatpak<'a> {
             .collect::<Vec<_>>();
         let fds: HashMap<u32, Fd> = fds.iter().map(|(u, f)| (*u, Fd::from(f))).collect();
 
-        call_method(
+        let res = call_method(
             self.inner(),
             "Spawn",
             &(
@@ -364,7 +367,12 @@ impl<'a> Flatpak<'a> {
                 options,
             ),
         )
-        .await
+        .await;
+
+        #[cfg(linux_pidfd_is_in_std)]
+        let res = res.map(|raw_pid| unsafe { PidFd::from_raw_fd(raw_pid) });
+
+        res
     }
 
     /// This methods let you send a Unix signal to a process that was started
