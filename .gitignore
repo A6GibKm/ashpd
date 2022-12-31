@@ -21,3 +21,4 @@ ashpd-demo/target/
 _build/
 builddir/
 session-test
+.fenv
