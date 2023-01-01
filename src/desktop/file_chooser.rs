@@ -82,18 +82,18 @@
 use std::{ffi::CString, os::unix::ffi::OsStrExt, path::Path};
 
 use serde::{Deserialize, Serialize};
-use serde_repr::Serialize_repr;
+use serde_repr::{Deserialize_repr, Serialize_repr};
 use zbus::zvariant::{DeserializeDict, SerializeDict, Type};
 
 use super::{HandleToken, Request};
 use crate::{proxy::Proxy, Error, WindowIdentifier};
 
-#[derive(Clone, Serialize, Type, Debug)]
+#[derive(Clone, Deserialize, Serialize, Type, Debug)]
 /// A file filter, to limit the available file choices to a mimetype or a glob
 /// pattern.
 pub struct FileFilter(String, Vec<(FilterType, String)>);
 
-#[derive(Clone, Serialize_repr, Debug, Type)]
+#[derive(Clone, Serialize_repr, Deserialize_repr, Debug, Type)]
 #[repr(u32)]
 enum FilterType {
     GlobPattern = 0,

@@ -1,0 +1,294 @@
+use std::cell::RefCell;
+
+use async_trait::async_trait;
+use futures_channel::{
+    mpsc::{Receiver, Sender},
+    oneshot,
+};
+use futures_util::{FutureExt, StreamExt};
+use zbus::dbus_interface;
+
+use crate::{
+    backend::IMPL_PATH,
+    desktop::{
+        file_chooser::{Choice, FileFilter},
+        Response,
+    },
+    zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
+    AppID, WindowIdentifierType,
+};
+
+// Does not coincide with the one in desktop/file_chooser.rs
+#[derive(DeserializeDict, Type, Debug, Default)]
+#[zvariant(signature = "dict")]
+pub struct OpenFileOptions {
+    pub accept_label: Option<String>,
+    pub modal: Option<bool>,
+    pub multiple: Option<bool>,
+    pub directory: Option<bool>,
+    pub filters: Option<Vec<FileFilter>>,
+    pub current_filter: Option<FileFilter>,
+    pub choices: Option<Vec<Choice>>,
+}
+
+// Does not coincide with the one in desktop/file_chooser.rs
+#[derive(DeserializeDict, Type, Debug, Default)]
+#[zvariant(signature = "dict")]
+pub struct SaveFileOptions {
+    pub accept_label: Option<String>,
+    pub modal: Option<bool>,
+    pub multiple: Option<bool>,
+    pub filters: Option<Vec<FileFilter>>,
+    pub current_filter: Option<FileFilter>,
+    pub choices: Option<Vec<Choice>>,
+    pub current_name: Option<String>,
+    pub current_folder: Option<Vec<u8>>,
+    pub current_file: Option<Vec<u8>>,
+}
+
+#[derive(DeserializeDict, Type, Debug, Default)]
+#[zvariant(signature = "dict")]
+pub struct SaveFilesOptions {
+    // TODO Its in the xdp docs, but is it correct? See
+    // https://github.com/flatpak/xdg-desktop-portal/issues/938
+    // pub handle_token: Option<String>,
+    pub accept_label: Option<String>,
+    pub modal: Option<bool>,
+    pub choices: Option<Vec<Choice>>,
+    pub current_folder: Option<Vec<u8>>,
+    pub files: Option<Vec<Vec<u8>>>,
+}
+
+#[derive(DeserializeDict, SerializeDict, Type, Debug, Default)]
+#[zvariant(signature = "dict")]
+pub struct OpenFileResults {
+    pub uris: Option<Vec<url::Url>>,
+    pub choices: Option<Vec<Choice>>,
+    pub current_filter: Option<FileFilter>,
+    pub writable: Option<bool>,
+}
+
+#[derive(DeserializeDict, SerializeDict, Type, Debug, Default)]
+#[zvariant(signature = "dict")]
+pub struct SaveFileResults {
+    pub uris: Option<Vec<url::Url>>,
+    pub choices: Option<Vec<Choice>>,
+    pub current_filter: Option<FileFilter>,
+}
+
+#[derive(DeserializeDict, SerializeDict, Type, Debug, Default)]
+#[zvariant(signature = "dict")]
+pub struct SaveFilesResults {
+    pub uris: Option<Vec<url::Url>>,
+    pub choices: Option<Vec<Choice>>,
+}
+
+#[async_trait]
+pub trait FileChooserImpl {
+    async fn open_file(
+        &self,
+        handle: OwnedObjectPath,
+        app_id: impl Into<AppID>,
+        window_identifier: WindowIdentifierType,
+        title: &str,
+        options: OpenFileOptions,
+    ) -> Response<OpenFileResults>;
+
+    async fn save_file(
+        &self,
+        handle: OwnedObjectPath,
+        app_id: impl Into<AppID>,
+        window_identifier: WindowIdentifierType,
+        title: &str,
+        options: SaveFileOptions,
+    ) -> Response<SaveFileResults>;
+
+    async fn save_files(
+        &self,
+        handle: OwnedObjectPath,
+        app_id: impl Into<AppID>,
+        window_identifier: WindowIdentifierType,
+        title: &str,
+        options: SaveFilesOptions,
+    ) -> Response<SaveFilesResults>;
+}
+
+pub struct FileChooser<T: FileChooserImpl> {
+    receiver: RefCell<Option<Receiver<Action>>>,
+    imp: T,
+}
+
+unsafe impl<T: Send + FileChooserImpl> Send for FileChooser<T> {}
+unsafe impl<T: Sync + FileChooserImpl> Sync for FileChooser<T> {}
+
+impl<T: FileChooserImpl> FileChooser<T> {
+    pub async fn new<N: TryInto<WellKnownName<'static>>>(
+        imp: T,
+        cnx: &zbus::Connection,
+        proxy: &zbus::fdo::DBusProxy<'_>,
+        name: N,
+    ) -> zbus::Result<Self>
+    where
+        zbus::Error: From<<N as TryInto<WellKnownName<'static>>>::Error>,
+    {
+        let (sender, receiver) = futures_channel::mpsc::channel(10);
+        let iface = FileChooserInterface::new(sender);
+        let object_server = cnx.object_server();
+
+        proxy
+            .request_name(
+                name.try_into()?,
+                zbus::fdo::RequestNameFlags::ReplaceExisting.into(),
+            )
+            .await?;
+
+        object_server.at(IMPL_PATH, iface).await?;
+        let provider = Self {
+            receiver: RefCell::new(Some(receiver)),
+            imp,
+        };
+
+        Ok(provider)
+    }
+
+    pub async fn next(&self) -> zbus::fdo::Result<()> {
+        let response = self
+            .receiver
+            .borrow_mut()
+            .as_mut()
+            .and_then(|receiver| receiver.try_next().unwrap_or(None));
+
+        match response {
+            Some(Action::OpenFile(handle, app_id, window_identifier, title, options, sender)) => {
+                let results = self
+                    .imp
+                    .open_file(handle, app_id, window_identifier, &title, options)
+                    .await;
+                let _ = sender.send(results);
+            }
+            Some(Action::SaveFile(handle, app_id, window_identifier, title, options, sender)) => {
+                let results = self
+                    .imp
+                    .save_file(handle, app_id, window_identifier, &title, options)
+                    .await;
+                let _ = sender.send(results);
+            }
+            Some(Action::SaveFiles(handle, app_id, window_identifier, title, options, sender)) => {
+                let results = self
+                    .imp
+                    .save_files(handle, app_id, window_identifier, &title, options)
+                    .await;
+                let _ = sender.send(results);
+            }
+            None => (),
+        }
+
+        Ok(())
+    }
+}
+
+enum Action {
+    OpenFile(
+        OwnedObjectPath,
+        AppID,
+        WindowIdentifierType,
+        String,
+        OpenFileOptions,
+        oneshot::Sender<Response<OpenFileResults>>,
+    ),
+    SaveFile(
+        OwnedObjectPath,
+        AppID,
+        WindowIdentifierType,
+        String,
+        SaveFileOptions,
+        oneshot::Sender<Response<SaveFileResults>>,
+    ),
+    SaveFiles(
+        OwnedObjectPath,
+        AppID,
+        WindowIdentifierType,
+        String,
+        SaveFilesOptions,
+        oneshot::Sender<Response<SaveFilesResults>>,
+    ),
+}
+
+struct FileChooserInterface {
+    sender: Sender<Action>,
+}
+
+impl FileChooserInterface {
+    pub fn new(sender: Sender<Action>) -> Self {
+        Self { sender }
+    }
+}
+
+#[dbus_interface(name = "org.freedesktop.impl.portal.FileChooser")]
+impl FileChooserInterface {
+    async fn open_file(
+        &mut self,
+        handle: OwnedObjectPath,
+        app_id: AppID,
+        window_identifier: WindowIdentifierType,
+        title: String,
+        options: OpenFileOptions,
+    ) -> Response<OpenFileResults> {
+        let (sender, receiver) = futures_channel::oneshot::channel();
+        let _ = self.sender.try_send(Action::OpenFile(
+            handle,
+            app_id,
+            window_identifier,
+            title,
+            options,
+            sender,
+        ));
+        let mut stream = receiver.into_stream();
+
+        stream.next().await.unwrap().unwrap()
+    }
+
+    async fn save_file(
+        &mut self,
+        handle: OwnedObjectPath,
+        app_id: AppID,
+        window_identifier: WindowIdentifierType,
+        title: String,
+        options: SaveFileOptions,
+    ) -> Response<SaveFileResults> {
+        let (sender, receiver) = futures_channel::oneshot::channel();
+        let _ = self.sender.try_send(Action::SaveFile(
+            handle,
+            app_id,
+            window_identifier,
+            title,
+            options,
+            sender,
+        ));
+        let mut stream = receiver.into_stream();
+
+        stream.next().await.unwrap().unwrap()
+    }
+
+    async fn save_files(
+        &mut self,
+        handle: OwnedObjectPath,
+        app_id: AppID,
+        window_identifier: WindowIdentifierType,
+        title: String,
+        options: SaveFilesOptions,
+    ) -> Response<SaveFilesResults> {
+        let (sender, receiver) = futures_channel::oneshot::channel();
+        let _ = self.sender.try_send(Action::SaveFiles(
+            handle,
+            app_id,
+            window_identifier,
+            title,
+            options,
+            sender,
+        ));
+        let mut stream = receiver.into_stream();
+
+        stream.next().await.unwrap().unwrap()
+    }
+}
