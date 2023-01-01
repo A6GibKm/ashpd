@@ -1,36 +1,153 @@
+use std::cell::RefCell;
+
+use async_trait::async_trait;
+use futures_channel::{
+    mpsc::{Receiver, Sender},
+    oneshot,
+};
+use futures_util::{FutureExt, StreamExt};
 use zbus::dbus_interface;
-use zvariant::{DeserializeDict, Type};
 
 use crate::{
+    backend::{Backend, IMPL_PATH},
     desktop::{
         request::{BasicResponse, Response},
         wallpaper::SetOn,
-        HandleToken,
     },
-    WindowIdentifierType,
+    zvariant::{DeserializeDict, OwnedObjectPath, Type},
+    AppID, WindowIdentifierType,
 };
 
-#[derive(DeserializeDict, Type, Debug, Default)]
+#[derive(DeserializeDict, Type, Debug)]
 #[zvariant(signature = "dict")]
 pub struct WallpaperOptions {
     #[zvariant(rename = "show-preview")]
-    show_preview: Option<bool>,
+    pub show_preview: Option<bool>,
     #[zvariant(rename = "set-on")]
-    set_on: Option<SetOn>,
+    pub set_on: Option<SetOn>,
 }
 
-pub struct Wallpaper {}
-
-#[dbus_interface(name = "org.freedesktop.impl.portal.Wallpaper")]
-impl Wallpaper {
+#[async_trait]
+pub trait WallpaperImpl {
     async fn set_wallpaper_uri(
         &self,
-        handle: HandleToken,
-        app_id: &str,
+        handle: OwnedObjectPath,
+        app_id: impl Into<AppID>,
+        window_identifier: WindowIdentifierType,
+        uri: url::Url,
+        options: WallpaperOptions,
+    ) -> Response<BasicResponse>;
+}
+
+pub struct Wallpaper<T: WallpaperImpl> {
+    receiver: RefCell<Option<Receiver<Action>>>,
+    imp: T,
+}
+
+unsafe impl<T: Send + WallpaperImpl> Send for Wallpaper<T> {}
+unsafe impl<T: Sync + WallpaperImpl> Sync for Wallpaper<T> {}
+
+impl<T: WallpaperImpl> Wallpaper<T> {
+    pub async fn new<N: TryInto<WellKnownName<'static>>>(
+        imp: T,
+        cnx: &zbus::Connection,
+        proxy: &zbus::fdo::DBusProxy<'_>,
+        name: N,
+    ) -> zbus::Result<Self>
+    where
+        zbus::Error: From<<N as TryInto<WellKnownName<'static>>>::Error>,
+    {
+        let (sender, receiver) = futures_channel::mpsc::channel(10);
+        let iface = WallpaperInterface::new(sender);
+        let object_server = cnx.object_server();
+
+        proxy
+            .request_name(
+                name.try_into()?,
+                zbus::fdo::RequestNameFlags::ReplaceExisting.into(),
+            )
+            .await?;
+
+        object_server.at(IMPL_PATH, iface).await?;
+        let provider = Self {
+            receiver: RefCell::new(Some(receiver)),
+            imp,
+        };
+
+        Ok(provider)
+    }
+
+    pub async fn next(&self) -> zbus::fdo::Result<()> {
+        let response = self
+            .receiver
+            .borrow_mut()
+            .as_mut()
+            .and_then(|receiver| receiver.try_next().unwrap_or(None));
+
+        if let Some(Action::SetWallpaperURI(
+            handle,
+            app_id,
+            window_identifier,
+            uri,
+            options,
+            sender,
+        )) = response
+        {
+            let result = self
+                .imp
+                .set_wallpaper_uri(handle, app_id, window_identifier, uri, options)
+                .await;
+            let _ = sender.send(result);
+        };
+
+        Ok(())
+    }
+}
+
+enum Action {
+    SetWallpaperURI(
+        OwnedObjectPath,
+        AppID,
+        WindowIdentifierType,
+        url::Url,
+        WallpaperOptions,
+        oneshot::Sender<Response<BasicResponse>>,
+    ),
+}
+
+struct WallpaperInterface {
+    sender: Sender<Action>,
+}
+
+impl WallpaperInterface {
+    pub fn new(sender: Sender<Action>) -> Self {
+        Self { sender }
+    }
+}
+
+#[dbus_interface(name = "org.freedesktop.impl.portal.Wallpaper")]
+impl WallpaperInterface {
+    #[dbus_interface(name = "SetWallpaperURI")]
+    async fn set_wallpaper_uri(
+        &mut self,
+        handle: OwnedObjectPath,
+        app_id: AppID,
         window_identifier: WindowIdentifierType,
         uri: url::Url,
         options: WallpaperOptions,
     ) -> Response<BasicResponse> {
-        todo!()
+        let (sender, receiver) = futures_channel::oneshot::channel();
+        let _ = self.sender.try_send(Action::SetWallpaperURI(
+            handle,
+            app_id,
+            window_identifier,
+            uri,
+            options,
+            sender,
+        ));
+        let mut stream = receiver.into_stream();
+        let next = stream.next().await;
+
+        next.unwrap().unwrap()
     }
 }
