@@ -27,7 +27,6 @@ mod window_identifier;
 pub use self::window_identifier::WindowIdentifier;
 mod app_id;
 pub use self::app_id::AppID;
-
 #[cfg(feature = "backend")]
 pub use self::window_identifier::WindowIdentifierType;
 #[cfg(feature = "backend")]
