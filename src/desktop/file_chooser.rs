@@ -88,12 +88,12 @@ use crate::{
     Error, WindowIdentifier,
 };
 
-#[derive(Clone, Deserialize, Serialize, Type, Debug)]
+#[derive(Clone, Deserialize, Serialize, Type, Debug, PartialEq)]
 /// A file filter, to limit the available file choices to a mimetype or a glob
 /// pattern.
 pub struct FileFilter(String, Vec<(FilterType, String)>);
 
-#[derive(Clone, Serialize_repr, Deserialize_repr, Debug, Type)]
+#[derive(Clone, Serialize_repr, Deserialize_repr, Debug, Type, PartialEq)]
 #[repr(u32)]
 enum FilterType {
     GlobPattern = 0,
@@ -122,6 +122,31 @@ impl FileFilter {
     pub fn glob(mut self, pattern: &str) -> Self {
         self.1.push((FilterType::GlobPattern, pattern.to_owned()));
         self
+    }
+}
+
+#[cfg(feature = "backend")]
+impl FileFilter {
+    pub fn label(&self) -> &str {
+        &self.0
+    }
+
+    pub fn mimetype_filters(&self) -> Vec<&str> {
+        self.1
+            .iter()
+            .filter_map(|(type_, string)| {
+                (type_ == &FilterType::MimeType).then_some(string.as_str())
+            })
+            .collect()
+    }
+
+    pub fn pattern_filters(&self) -> Vec<&str> {
+        self.1
+            .iter()
+            .filter_map(|(type_, string)| {
+                (type_ == &FilterType::GlobPattern).then_some(string.as_str())
+            })
+            .collect()
     }
 }
 
