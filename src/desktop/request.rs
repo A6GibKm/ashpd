@@ -21,7 +21,7 @@ use crate::{desktop::HandleToken, proxy::Proxy, Error};
 /// A typical response returned by the [`Request::receive_response`] signal
 /// of a [`Request`].
 #[derive(Debug)]
-pub(crate) enum Response<T>
+pub enum Response<T>
 where
     T: for<'de> Deserialize<'de> + Type,
 {
@@ -29,6 +29,24 @@ where
     Ok(T),
     /// The user cancelled the request or something else happened.
     Err(ResponseError),
+}
+
+#[cfg(feature = "backend")]
+impl<T> Response<T>
+where
+    T: for<'de> Deserialize<'de> + Type,
+{
+    pub fn ok(inner: T) -> Self {
+        Self::Ok(inner)
+    }
+
+    pub fn cancelled() -> Self {
+        Self::Err(ResponseError::Cancelled)
+    }
+
+    pub fn other() -> Self {
+        Self::Err(ResponseError::Other)
+    }
 }
 
 impl<T> Type for Response<T>
