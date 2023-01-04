@@ -52,6 +52,7 @@ use crate::{
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Type)]
 #[zvariant(signature = "s")]
+#[serde(rename_all = "lowercase")]
 /// Where to set the wallpaper on.
 pub enum SetOn {
     /// Set the wallpaper only on the lock-screen.
