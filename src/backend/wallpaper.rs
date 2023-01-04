@@ -10,10 +10,7 @@ use zbus::dbus_interface;
 
 use crate::{
     backend::{Backend, IMPL_PATH},
-    desktop::{
-        request::{BasicResponse, Response},
-        wallpaper::SetOn,
-    },
+    desktop::{request::Response, wallpaper::SetOn},
     zvariant::{DeserializeDict, OwnedObjectPath, Type},
     AppID, WindowIdentifierType,
 };
@@ -36,7 +33,7 @@ pub trait WallpaperImpl {
         window_identifier: WindowIdentifierType,
         uri: url::Url,
         options: WallpaperOptions,
-    ) -> Response<BasicResponse>;
+    ) -> Response<()>;
 }
 
 pub struct Wallpaper<T: WallpaperImpl> {
@@ -111,7 +108,7 @@ enum Action {
         WindowIdentifierType,
         url::Url,
         WallpaperOptions,
-        oneshot::Sender<Response<BasicResponse>>,
+        oneshot::Sender<Response<()>>,
     ),
 }
 
@@ -135,7 +132,7 @@ impl WallpaperInterface {
         window_identifier: WindowIdentifierType,
         uri: url::Url,
         options: WallpaperOptions,
-    ) -> Response<BasicResponse> {
+    ) -> Response<()> {
         let (sender, receiver) = futures_channel::oneshot::channel();
         let _ = self.sender.try_send(Action::SetWallpaperURI(
             handle,
