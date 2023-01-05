@@ -48,25 +48,10 @@ unsafe impl<T: Send + WallpaperImpl> Send for Wallpaper<T> {}
 unsafe impl<T: Sync + WallpaperImpl> Sync for Wallpaper<T> {}
 
 impl<T: WallpaperImpl> Wallpaper<T> {
-    pub async fn new<N: TryInto<WellKnownName<'static>>>(
-        imp: T,
-        cnx: &zbus::Connection,
-        proxy: &zbus::fdo::DBusProxy<'_>,
-        name: N,
-    ) -> zbus::Result<Self>
-    where
-        zbus::Error: From<<N as TryInto<WellKnownName<'static>>>::Error>,
-    {
+    pub async fn new(imp: T, backend: &Backend) -> zbus::Result<Self> {
         let (sender, receiver) = futures_channel::mpsc::channel(10);
         let iface = WallpaperInterface::new(sender);
-        let object_server = cnx.object_server();
-
-        proxy
-            .request_name(
-                name.try_into()?,
-                zbus::fdo::RequestNameFlags::ReplaceExisting.into(),
-            )
-            .await?;
+        let object_server = backend.cnx().object_server();
 
         object_server.at(IMPL_PATH, iface).await?;
         let provider = Self {

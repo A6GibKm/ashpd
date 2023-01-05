@@ -8,7 +8,7 @@ use futures_channel::{
 use futures_util::{FutureExt, StreamExt};
 use zbus::dbus_interface;
 
-use crate::backend::IMPL_PATH;
+use crate::backend::{Backend, IMPL_PATH};
 
 #[async_trait]
 pub trait RequestImpl {
@@ -24,25 +24,10 @@ unsafe impl<T: Send + RequestImpl> Send for Request<T> {}
 unsafe impl<T: Sync + RequestImpl> Sync for Request<T> {}
 
 impl<T: RequestImpl> Request<T> {
-    pub async fn new<N: TryInto<WellKnownName<'static>>>(
-        imp: T,
-        cnx: &zbus::Connection,
-        proxy: &zbus::fdo::DBusProxy<'_>,
-        name: N,
-    ) -> zbus::Result<Self>
-    where
-        zbus::Error: From<<N as TryInto<WellKnownName<'static>>>::Error>,
-    {
+    pub async fn new(imp: T, backend: &Backend) -> zbus::Result<Self> {
         let (sender, receiver) = futures_channel::mpsc::channel(10);
         let iface = RequestInterface::new(sender);
-        let object_server = cnx.object_server();
-
-        proxy
-            .request_name(
-                name.try_into()?,
-                zbus::fdo::RequestNameFlags::ReplaceExisting.into(),
-            )
-            .await?;
+        let object_server = backend.cnx().object_server();
 
         object_server.at(IMPL_PATH, iface).await?;
         let provider = Self {
