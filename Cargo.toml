@@ -12,7 +12,7 @@ version = "0.4.0-alpha.2"
 
 [features]
 default = ["async-std"]
-backend = ["async-trait"]
+backend = ["async-trait", "futures"]
 gtk3_x11 = ["gdk3x11", "dep:gtk3"]
 gtk3_wayland = ["gdk3wayland", "dep:gtk3"]
 gtk3 = ["gtk3_x11", "gtk3_wayland"]
@@ -52,6 +52,7 @@ tokio = {version = "1.21", features = ["fs", "io-util"], optional = true, defaul
 once_cell = "1.14"
 url = {version = "2.3", features = ["serde"]}
 async-trait = {version = "0.1.60", optional = true}
+futures = { version = "0.3.25", features = ["executor", "thread-pool"], optional = true}
 
 [dev-dependencies]
 serde_json = "1.0"

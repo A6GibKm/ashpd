@@ -9,7 +9,7 @@ use futures_util::{FutureExt, StreamExt};
 use zbus::dbus_interface;
 
 use crate::{
-    backend::IMPL_PATH,
+    backend::{Backend, IMPL_PATH},
     desktop::{
         file_chooser::{Choice, FileFilter},
         Response,
@@ -122,25 +122,10 @@ unsafe impl<T: Send + FileChooserImpl> Send for FileChooser<T> {}
 unsafe impl<T: Sync + FileChooserImpl> Sync for FileChooser<T> {}
 
 impl<T: FileChooserImpl> FileChooser<T> {
-    pub async fn new<N: TryInto<WellKnownName<'static>>>(
-        imp: T,
-        cnx: &zbus::Connection,
-        proxy: &zbus::fdo::DBusProxy<'_>,
-        name: N,
-    ) -> zbus::Result<Self>
-    where
-        zbus::Error: From<<N as TryInto<WellKnownName<'static>>>::Error>,
-    {
+    pub async fn new(imp: T, backend: &Backend) -> zbus::Result<Self> {
         let (sender, receiver) = futures_channel::mpsc::channel(10);
         let iface = FileChooserInterface::new(sender);
-        let object_server = cnx.object_server();
-
-        proxy
-            .request_name(
-                name.try_into()?,
-                zbus::fdo::RequestNameFlags::ReplaceExisting.into(),
-            )
-            .await?;
+        let object_server = backend.cnx().object_server();
 
         object_server.at(IMPL_PATH, iface).await?;
         let provider = Self {
