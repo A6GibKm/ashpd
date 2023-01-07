@@ -50,9 +50,9 @@ where
 }
 
 #[cfg(feature = "backend")]
-impl Response<BasicResponse> {
+impl Response<EmptyResponse> {
     pub fn empty() -> Self {
-        Self::Ok(BasicResponse::default())
+        Self::Ok(EmptyResponse::default())
     }
 }
 
@@ -161,6 +161,10 @@ impl Debug for BasicResponse {
         f.debug_tuple("BasicResponse").finish()
     }
 }
+
+#[cfg(feature = "backend")]
+#[derive(Default, Serialize, Deserialize, Type, Debug)]
+pub struct EmptyResponse {}
 
 #[derive(Debug, Copy, PartialEq, Eq, Hash, Clone)]
 /// An error returned a portal request caused by either the user cancelling the

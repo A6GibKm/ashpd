@@ -14,7 +14,7 @@ use crate::{
         Backend, IMPL_PATH,
     },
     desktop::{
-        request::{BasicResponse, Response},
+        request::{EmptyResponse, Response},
         wallpaper::SetOn,
     },
     zvariant::{DeserializeDict, OwnedObjectPath, Type},
@@ -34,25 +34,24 @@ pub struct WallpaperOptions {
 pub trait WallpaperImpl {
     async fn set_wallpaper_uri(
         &self,
-        app_id: impl Into<AppID>,
+        app_id: AppID,
         window_identifier: WindowIdentifierType,
         uri: url::Url,
         options: WallpaperOptions,
-    ) -> Response<BasicResponse>;
+    ) -> Response<EmptyResponse>;
 }
 
-pub struct Wallpaper<T: WallpaperImpl, R: RequestImpl> {
+pub struct Wallpaper<T: WallpaperImpl + RequestImpl> {
     receiver: RefCell<Option<Receiver<Action>>>,
-    imp: T,
+    imp: Arc<T>,
     backend: Backend,
-    request_imp: Arc<R>,
 }
 
-unsafe impl<T: Send + WallpaperImpl, R: RequestImpl> Send for Wallpaper<T, R> {}
-unsafe impl<T: Sync + WallpaperImpl, R: RequestImpl> Sync for Wallpaper<T, R> {}
+unsafe impl<T: Send + WallpaperImpl + RequestImpl> Send for Wallpaper<T> {}
+unsafe impl<T: Sync + WallpaperImpl + RequestImpl> Sync for Wallpaper<T> {}
 
-impl<T: WallpaperImpl, R: RequestImpl> Wallpaper<T, R> {
-    pub async fn new(imp: T, request: R, backend: &Backend) -> zbus::Result<Self> {
+impl<T: WallpaperImpl + RequestImpl> Wallpaper<T> {
+    pub async fn new(imp: T, backend: &Backend) -> zbus::Result<Self> {
         let (sender, receiver) = futures_channel::mpsc::channel(10);
         let iface = WallpaperInterface::new(sender);
         let object_server = backend.cnx().object_server();
@@ -60,9 +59,8 @@ impl<T: WallpaperImpl, R: RequestImpl> Wallpaper<T, R> {
         object_server.at(IMPL_PATH, iface).await?;
         let provider = Self {
             receiver: RefCell::new(Some(receiver)),
-            imp,
+            imp: Arc::new(imp),
             backend: backend.clone(),
-            request_imp: Arc::new(request),
         };
 
         Ok(provider)
@@ -84,8 +82,7 @@ impl<T: WallpaperImpl, R: RequestImpl> Wallpaper<T, R> {
             sender,
         )) = response
         {
-            let request =
-                Request::new(Arc::clone(&self.request_imp), handle_path, &self.backend).await?;
+            let request = Request::new(Arc::clone(&self.imp), handle_path, &self.backend).await?;
             let result = self
                 .imp
                 .set_wallpaper_uri(app_id, window_identifier, uri, options)
@@ -105,7 +102,7 @@ enum Action {
         WindowIdentifierType,
         url::Url,
         WallpaperOptions,
-        oneshot::Sender<Response<BasicResponse>>,
+        oneshot::Sender<Response<EmptyResponse>>,
     ),
 }
 
@@ -129,7 +126,7 @@ impl WallpaperInterface {
         window_identifier: WindowIdentifierType,
         uri: url::Url,
         options: WallpaperOptions,
-    ) -> Response<BasicResponse> {
+    ) -> Response<EmptyResponse> {
         let (sender, receiver) = futures_channel::oneshot::channel();
         let _ = self.sender.try_send(Action::SetWallpaperURI(
             handle,
