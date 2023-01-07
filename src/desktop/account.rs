@@ -36,7 +36,7 @@ struct UserInformationOptions {
     reason: Option<String>,
 }
 
-#[derive(Debug, DeserializeDict, Type)]
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
 /// The response of a [`UserInformationRequest`] request.
 #[zvariant(signature = "dict")]
 pub struct UserInformationResponse {
@@ -46,6 +46,15 @@ pub struct UserInformationResponse {
 }
 
 impl UserInformationResponse {
+    #[cfg(feature = "backend")]
+    pub fn new(id: &str, name: &str, image: url::Url) -> Self {
+        Self {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            image,
+        }
+    }
+
     /// User identifier.
     pub fn id(&self) -> &str {
         &self.id
