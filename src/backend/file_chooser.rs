@@ -90,7 +90,7 @@ pub struct SaveFilesResults {
 pub trait FileChooserImpl {
     async fn open_file(
         &self,
-        app_id: impl Into<AppID>,
+        app_id: AppID,
         window_identifier: WindowIdentifierType,
         title: &str,
         options: OpenFileOptions,
@@ -98,7 +98,7 @@ pub trait FileChooserImpl {
 
     async fn save_file(
         &self,
-        app_id: impl Into<AppID>,
+        app_id: AppID,
         window_identifier: WindowIdentifierType,
         title: &str,
         options: SaveFileOptions,
@@ -106,7 +106,7 @@ pub trait FileChooserImpl {
 
     async fn save_files(
         &self,
-        app_id: impl Into<AppID>,
+        app_id: AppID,
         window_identifier: WindowIdentifierType,
         title: &str,
         options: SaveFilesOptions,

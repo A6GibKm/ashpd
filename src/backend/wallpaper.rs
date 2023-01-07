@@ -31,7 +31,7 @@ pub struct WallpaperOptions {
 pub trait WallpaperImpl {
     async fn set_wallpaper_uri(
         &self,
-        app_id: impl Into<AppID>,
+        app_id: AppID,
         window_identifier: WindowIdentifierType,
         uri: url::Url,
         options: WallpaperOptions,

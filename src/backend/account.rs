@@ -32,7 +32,7 @@ impl UserInformationOptions {
 pub trait AccountImpl: RequestImpl {
     async fn get_user_information(
         &self,
-        app_id: impl Into<AppID>,
+        app_id: AppID,
         window_identifier: WindowIdentifierType,
         options: UserInformationOptions,
     ) -> Response<UserInformation>;
