@@ -2,13 +2,14 @@ use futures::{executor::ThreadPool, task::SpawnExt};
 use zbus::names::WellKnownName;
 
 // mod access;
-// mod account;
+mod account;
 mod file_chooser;
 mod request;
 // mod session;
 mod settings;
 mod wallpaper;
 
+pub use account::{Account, AccountImpl, UserInformationOptions};
 pub use file_chooser::{
     FileChooser, FileChooserImpl, OpenFileOptions, OpenFileResults, SaveFileOptions,
     SaveFileResults, SaveFilesOptions, SaveFilesResults,

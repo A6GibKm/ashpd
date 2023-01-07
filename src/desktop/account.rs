@@ -15,8 +15,8 @@
 //!         .await?
 //!         .response()?;
 //!
-//!     println!("Name: {}", response.name());
-//!     println!("ID: {}", response.id());
+//!     println!("Name: {:?}", response.name());
+//!     println!("ID: {:?}", response.id());
 //!
 //!     Ok(())
 //! }
@@ -34,29 +34,38 @@ struct UserInformationOptions {
     reason: Option<String>,
 }
 
-#[derive(Debug, DeserializeDict, Type)]
+#[derive(Debug, Default, SerializeDict, DeserializeDict, Type)]
 /// The response of a [`UserInformationRequest`] request.
 #[zvariant(signature = "dict")]
 pub struct UserInformation {
-    id: String,
-    name: String,
-    image: url::Url,
+    id: Option<String>,
+    name: Option<String>,
+    image: Option<url::Url>,
 }
 
 impl UserInformation {
+    #[cfg(feature = "backend")]
+    pub fn new(id: &str, name: &str, image: url::Url) -> Self {
+        Self {
+            id: Some(id.to_owned()),
+            name: Some(name.to_owned()),
+            image: Some(image),
+        }
+    }
+
     /// User identifier.
-    pub fn id(&self) -> &str {
-        &self.id
+    pub fn id(&self) -> Option<&str> {
+        self.id.as_deref()
     }
 
     /// User name.
-    pub fn name(&self) -> &str {
-        &self.name
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
     }
 
     /// User image uri.
-    pub fn image(&self) -> &url::Url {
-        &self.image
+    pub fn image(&self) -> Option<&url::Url> {
+        self.image.as_ref()
     }
 
     /// Creates a new builder-pattern struct instance to construct
