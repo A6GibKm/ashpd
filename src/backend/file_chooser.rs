@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, sync::Arc};
 
 use async_trait::async_trait;
 use futures_channel::{
@@ -9,7 +9,10 @@ use futures_util::{FutureExt, StreamExt};
 use zbus::dbus_interface;
 
 use crate::{
-    backend::{Backend, IMPL_PATH},
+    backend::{
+        request::{Request, RequestImpl},
+        Backend, IMPL_PATH,
+    },
     desktop::{
         file_chooser::{Choice, FileFilter},
         Response,
@@ -87,7 +90,6 @@ pub struct SaveFilesResults {
 pub trait FileChooserImpl {
     async fn open_file(
         &self,
-        handle: OwnedObjectPath,
         app_id: impl Into<AppID>,
         window_identifier: WindowIdentifierType,
         title: &str,
@@ -96,7 +98,6 @@ pub trait FileChooserImpl {
 
     async fn save_file(
         &self,
-        handle: OwnedObjectPath,
         app_id: impl Into<AppID>,
         window_identifier: WindowIdentifierType,
         title: &str,
@@ -105,7 +106,6 @@ pub trait FileChooserImpl {
 
     async fn save_files(
         &self,
-        handle: OwnedObjectPath,
         app_id: impl Into<AppID>,
         window_identifier: WindowIdentifierType,
         title: &str,
@@ -113,16 +113,18 @@ pub trait FileChooserImpl {
     ) -> Response<SaveFilesResults>;
 }
 
-pub struct FileChooser<T: FileChooserImpl> {
+pub struct FileChooser<T: FileChooserImpl, R: RequestImpl> {
     receiver: RefCell<Option<Receiver<Action>>>,
     imp: T,
+    backend: Backend,
+    request_imp: Arc<R>,
 }
 
-unsafe impl<T: Send + FileChooserImpl> Send for FileChooser<T> {}
-unsafe impl<T: Sync + FileChooserImpl> Sync for FileChooser<T> {}
+unsafe impl<T: Send + FileChooserImpl, R: RequestImpl> Send for FileChooser<T, R> {}
+unsafe impl<T: Sync + FileChooserImpl, R: RequestImpl> Sync for FileChooser<T, R> {}
 
-impl<T: FileChooserImpl> FileChooser<T> {
-    pub async fn new(imp: T, backend: &Backend) -> zbus::Result<Self> {
+impl<T: FileChooserImpl, R: RequestImpl> FileChooser<T, R> {
+    pub async fn new(imp: T, request: R, backend: &Backend) -> zbus::Result<Self> {
         let (sender, receiver) = futures_channel::mpsc::channel(10);
         let iface = FileChooserInterface::new(sender);
         let object_server = backend.cnx().object_server();
@@ -131,6 +133,8 @@ impl<T: FileChooserImpl> FileChooser<T> {
         let provider = Self {
             receiver: RefCell::new(Some(receiver)),
             imp,
+            request_imp: Arc::new(request),
+            backend: backend.clone(),
         };
 
         Ok(provider)
@@ -144,26 +148,35 @@ impl<T: FileChooserImpl> FileChooser<T> {
             .and_then(|receiver| receiver.try_next().unwrap_or(None));
 
         match response {
-            Some(Action::OpenFile(handle, app_id, window_identifier, title, options, sender)) => {
+            Some(Action::OpenFile(path, app_id, window_identifier, title, options, sender)) => {
+                let request =
+                    Request::new(Arc::clone(&self.request_imp), path, &self.backend).await?;
                 let results = self
                     .imp
-                    .open_file(handle, app_id, window_identifier, &title, options)
+                    .open_file(app_id, window_identifier, &title, options)
                     .await;
                 let _ = sender.send(results);
+                request.next().await?;
             }
-            Some(Action::SaveFile(handle, app_id, window_identifier, title, options, sender)) => {
+            Some(Action::SaveFile(path, app_id, window_identifier, title, options, sender)) => {
+                let request =
+                    Request::new(Arc::clone(&self.request_imp), path, &self.backend).await?;
                 let results = self
                     .imp
-                    .save_file(handle, app_id, window_identifier, &title, options)
+                    .save_file(app_id, window_identifier, &title, options)
                     .await;
                 let _ = sender.send(results);
+                request.next().await?;
             }
-            Some(Action::SaveFiles(handle, app_id, window_identifier, title, options, sender)) => {
+            Some(Action::SaveFiles(path, app_id, window_identifier, title, options, sender)) => {
+                let request =
+                    Request::new(Arc::clone(&self.request_imp), path, &self.backend).await?;
                 let results = self
                     .imp
-                    .save_files(handle, app_id, window_identifier, &title, options)
+                    .save_files(app_id, window_identifier, &title, options)
                     .await;
                 let _ = sender.send(results);
+                request.next().await?;
             }
             None => (),
         }

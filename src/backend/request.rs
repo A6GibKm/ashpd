@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, sync::Arc};
 
 use async_trait::async_trait;
 use futures_channel::{
@@ -6,30 +6,36 @@ use futures_channel::{
     oneshot,
 };
 use futures_util::{FutureExt, StreamExt};
-use zbus::dbus_interface;
+use zbus::{dbus_interface, zvariant::OwnedObjectPath};
 
-use crate::backend::{Backend, IMPL_PATH};
+use crate::backend::Backend;
 
 #[async_trait]
 pub trait RequestImpl {
     async fn close(&self);
 }
 
-pub struct Request<T: RequestImpl> {
+pub(crate) struct Request<T: RequestImpl> {
     receiver: RefCell<Option<Receiver<Action>>>,
-    imp: T,
+    imp: Arc<T>,
 }
 
 unsafe impl<T: Send + RequestImpl> Send for Request<T> {}
 unsafe impl<T: Sync + RequestImpl> Sync for Request<T> {}
 
 impl<T: RequestImpl> Request<T> {
-    pub async fn new(imp: T, backend: &Backend) -> zbus::Result<Self> {
+    pub async fn new(
+        imp: Arc<T>,
+        handle_path: OwnedObjectPath,
+        backend: &Backend,
+    ) -> zbus::Result<Self> {
         let (sender, receiver) = futures_channel::mpsc::channel(10);
-        let iface = RequestInterface::new(sender);
+        let iface = RequestInterface::new(sender, handle_path.clone());
         let object_server = backend.cnx().object_server();
 
-        object_server.at(IMPL_PATH, iface).await?;
+        #[cfg(feature = "tracing")]
+        tracing::debug!("Handling object {:?}", handle_path.as_str());
+        object_server.at(handle_path, iface).await?;
         let provider = Self {
             receiver: RefCell::new(Some(receiver)),
             imp,
@@ -60,21 +66,36 @@ enum Action {
 
 struct RequestInterface {
     sender: Sender<Action>,
+    handle_path: OwnedObjectPath,
 }
 
 impl RequestInterface {
-    pub fn new(sender: Sender<Action>) -> Self {
-        Self { sender }
+    pub fn new(sender: Sender<Action>, handle_path: OwnedObjectPath) -> Self {
+        Self {
+            sender,
+            handle_path,
+        }
     }
 }
 
 #[dbus_interface(name = "org.freedesktop.impl.portal.Request")]
 impl RequestInterface {
-    async fn close(&mut self) {
+    async fn close(
+        &mut self,
+        #[zbus(object_server)] server: &zbus::ObjectServer,
+    ) -> zbus::fdo::Result<()> {
         let (sender, receiver) = futures_channel::oneshot::channel();
         let _ = self.sender.try_send(Action::Close(sender));
         let mut stream = receiver.into_stream();
         let next = stream.next().await;
         next.unwrap().unwrap();
+
+        // Drop the request as it served it purpose once closed
+        #[cfg(feature = "tracing")]
+        tracing::debug!("Releasing object {:?}", self.handle_path.as_str());
+        server
+            .remove::<Self, &OwnedObjectPath>(&self.handle_path)
+            .await?;
+        Ok(())
     }
 }

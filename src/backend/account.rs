@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, sync::Arc};
 
 use async_trait::async_trait;
 use futures_channel::{
@@ -8,6 +8,7 @@ use futures_channel::{
 use futures_util::{FutureExt, StreamExt};
 use zbus::dbus_interface;
 
+use super::{request::Request, RequestImpl};
 use crate::{
     backend::{Backend, IMPL_PATH},
     desktop::{account::UserInformation, request::Response},
@@ -28,26 +29,27 @@ impl UserInformationOptions {
 }
 
 #[async_trait]
-pub trait AccountImpl {
+pub trait AccountImpl: RequestImpl {
     async fn get_user_information(
         &self,
-        handle: OwnedObjectPath,
         app_id: impl Into<AppID>,
         window_identifier: WindowIdentifierType,
         options: UserInformationOptions,
     ) -> Response<UserInformation>;
 }
 
-pub struct Account<T: AccountImpl> {
+pub struct Account<T: AccountImpl, R: RequestImpl> {
     receiver: RefCell<Option<Receiver<Action>>>,
+    backend: Backend,
     imp: T,
+    request_imp: Arc<R>,
 }
 
-unsafe impl<T: Send + AccountImpl> Send for Account<T> {}
-unsafe impl<T: Sync + AccountImpl> Sync for Account<T> {}
+unsafe impl<T: Send + AccountImpl, R: RequestImpl> Send for Account<T, R> {}
+unsafe impl<T: Sync + AccountImpl, R: RequestImpl> Sync for Account<T, R> {}
 
-impl<T: AccountImpl> Account<T> {
-    pub async fn new(imp: T, backend: &Backend) -> zbus::Result<Self> {
+impl<T: AccountImpl + Sync, R: RequestImpl> Account<T, R> {
+    pub async fn new(imp: T, request: R, backend: &Backend) -> zbus::Result<Self> {
         let (sender, receiver) = futures_channel::mpsc::channel(10);
         let iface = AccountInterface::new(sender);
         let object_server = backend.cnx().object_server();
@@ -56,6 +58,8 @@ impl<T: AccountImpl> Account<T> {
         let provider = Self {
             receiver: RefCell::new(Some(receiver)),
             imp,
+            request_imp: Arc::new(request),
+            backend: backend.clone(),
         };
 
         Ok(provider)
@@ -69,18 +73,21 @@ impl<T: AccountImpl> Account<T> {
             .and_then(|receiver| receiver.try_next().unwrap_or(None));
 
         if let Some(Action::GetUserInformation(
-            handle,
+            handle_path,
             app_id,
             window_identifier,
             options,
             sender,
         )) = response
         {
+            let request =
+                Request::new(Arc::clone(&self.request_imp), handle_path, &self.backend).await?;
             let result = self
                 .imp
-                .get_user_information(handle, app_id, window_identifier, options)
+                .get_user_information(app_id, window_identifier, options)
                 .await;
             let _ = sender.send(result);
+            request.next().await?;
         };
 
         Ok(())
