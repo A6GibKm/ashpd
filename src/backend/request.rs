@@ -8,8 +8,6 @@ use futures_channel::{
 use futures_util::{FutureExt, StreamExt};
 use zbus::{dbus_interface, zvariant::OwnedObjectPath};
 
-use crate::backend::Backend;
-
 #[async_trait]
 pub trait RequestImpl {
     async fn close(&self);
@@ -27,11 +25,11 @@ impl<T: RequestImpl> Request<T> {
     pub async fn new(
         imp: Arc<T>,
         handle_path: OwnedObjectPath,
-        backend: &Backend,
+        cnx: &zbus::Connection,
     ) -> zbus::Result<Self> {
         let (sender, receiver) = futures_channel::mpsc::channel(10);
         let iface = RequestInterface::new(sender, handle_path.clone());
-        let object_server = backend.cnx().object_server();
+        let object_server = cnx.object_server();
 
         #[cfg(feature = "tracing")]
         tracing::debug!("Handling object {:?}", handle_path.as_str());

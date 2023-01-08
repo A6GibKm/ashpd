@@ -116,7 +116,7 @@ pub trait FileChooserImpl {
 pub struct FileChooser<T: FileChooserImpl, R: RequestImpl> {
     receiver: RefCell<Option<Receiver<Action>>>,
     imp: T,
-    backend: Backend,
+    cnx: zbus::Connection,
     request_imp: Arc<R>,
 }
 
@@ -134,7 +134,7 @@ impl<T: FileChooserImpl, R: RequestImpl> FileChooser<T, R> {
             receiver: RefCell::new(Some(receiver)),
             imp,
             request_imp: Arc::new(request),
-            backend: backend.clone(),
+            cnx: backend.cnx().clone(),
         };
 
         Ok(provider)
@@ -149,8 +149,7 @@ impl<T: FileChooserImpl, R: RequestImpl> FileChooser<T, R> {
 
         match response {
             Some(Action::OpenFile(path, app_id, window_identifier, title, options, sender)) => {
-                let request =
-                    Request::new(Arc::clone(&self.request_imp), path, &self.backend).await?;
+                let request = Request::new(Arc::clone(&self.request_imp), path, &self.cnx).await?;
                 let results = self
                     .imp
                     .open_file(app_id, window_identifier, &title, options)
@@ -159,8 +158,7 @@ impl<T: FileChooserImpl, R: RequestImpl> FileChooser<T, R> {
                 request.next().await?;
             }
             Some(Action::SaveFile(path, app_id, window_identifier, title, options, sender)) => {
-                let request =
-                    Request::new(Arc::clone(&self.request_imp), path, &self.backend).await?;
+                let request = Request::new(Arc::clone(&self.request_imp), path, &self.cnx).await?;
                 let results = self
                     .imp
                     .save_file(app_id, window_identifier, &title, options)
@@ -169,8 +167,7 @@ impl<T: FileChooserImpl, R: RequestImpl> FileChooser<T, R> {
                 request.next().await?;
             }
             Some(Action::SaveFiles(path, app_id, window_identifier, title, options, sender)) => {
-                let request =
-                    Request::new(Arc::clone(&self.request_imp), path, &self.backend).await?;
+                let request = Request::new(Arc::clone(&self.request_imp), path, &self.cnx).await?;
                 let results = self
                     .imp
                     .save_files(app_id, window_identifier, &title, options)

@@ -22,7 +22,6 @@ pub(crate) const IMPL_PATH: &str = "/org/freedesktop/portal/desktop";
 
 // We use option to be able to take() without cloning. Unwraping is safe as they
 // are set in construction.
-#[derive(Clone)]
 pub struct Backend {
     cnx: Option<zbus::Connection>,
     name: Option<WellKnownName<'static>>,

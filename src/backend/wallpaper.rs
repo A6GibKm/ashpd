@@ -41,7 +41,7 @@ pub trait WallpaperImpl {
 pub struct Wallpaper<T: WallpaperImpl, R: RequestImpl> {
     receiver: RefCell<Option<Receiver<Action>>>,
     imp: T,
-    backend: Backend,
+    cnx: zbus::Connection,
     request_imp: Arc<R>,
 }
 
@@ -58,7 +58,7 @@ impl<T: WallpaperImpl, R: RequestImpl> Wallpaper<T, R> {
         let provider = Self {
             receiver: RefCell::new(Some(receiver)),
             imp,
-            backend: backend.clone(),
+            cnx: backend.cnx().clone(),
             request_imp: Arc::new(request),
         };
 
@@ -82,7 +82,7 @@ impl<T: WallpaperImpl, R: RequestImpl> Wallpaper<T, R> {
         )) = response
         {
             let request =
-                Request::new(Arc::clone(&self.request_imp), handle_path, &self.backend).await?;
+                Request::new(Arc::clone(&self.request_imp), handle_path, &self.cnx).await?;
             let result = self
                 .imp
                 .set_wallpaper_uri(app_id, window_identifier, uri, options)

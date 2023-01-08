@@ -40,7 +40,7 @@ pub trait AccountImpl: RequestImpl {
 
 pub struct Account<T: AccountImpl, R: RequestImpl> {
     receiver: RefCell<Option<Receiver<Action>>>,
-    backend: Backend,
+    cnx: zbus::Connection,
     imp: T,
     request_imp: Arc<R>,
 }
@@ -59,7 +59,7 @@ impl<T: AccountImpl + Sync, R: RequestImpl> Account<T, R> {
             receiver: RefCell::new(Some(receiver)),
             imp,
             request_imp: Arc::new(request),
-            backend: backend.clone(),
+            cnx: backend.cnx().clone(),
         };
 
         Ok(provider)
@@ -81,7 +81,7 @@ impl<T: AccountImpl + Sync, R: RequestImpl> Account<T, R> {
         )) = response
         {
             let request =
-                Request::new(Arc::clone(&self.request_imp), handle_path, &self.backend).await?;
+                Request::new(Arc::clone(&self.request_imp), handle_path, &self.cnx).await?;
             let result = self
                 .imp
                 .get_user_information(app_id, window_identifier, options)
