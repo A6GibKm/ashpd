@@ -113,18 +113,17 @@ pub trait FileChooserImpl {
     ) -> Response<SaveFilesResults>;
 }
 
-pub struct FileChooser<T: FileChooserImpl, R: RequestImpl> {
+pub struct FileChooser<T: FileChooserImpl + RequestImpl> {
     receiver: RefCell<Option<Receiver<Action>>>,
-    imp: T,
+    imp: Arc<T>,
     cnx: zbus::Connection,
-    request_imp: Arc<R>,
 }
 
-unsafe impl<T: Send + FileChooserImpl, R: RequestImpl> Send for FileChooser<T, R> {}
-unsafe impl<T: Sync + FileChooserImpl, R: RequestImpl> Sync for FileChooser<T, R> {}
+unsafe impl<T: Send + FileChooserImpl + RequestImpl> Send for FileChooser<T> {}
+unsafe impl<T: Sync + FileChooserImpl + RequestImpl> Sync for FileChooser<T> {}
 
-impl<T: FileChooserImpl, R: RequestImpl> FileChooser<T, R> {
-    pub async fn new(imp: T, request: R, backend: &Backend) -> zbus::Result<Self> {
+impl<T: FileChooserImpl + RequestImpl> FileChooser<T> {
+    pub async fn new(imp: T, backend: &Backend) -> zbus::Result<Self> {
         let (sender, receiver) = futures_channel::mpsc::channel(10);
         let iface = FileChooserInterface::new(sender);
         let object_server = backend.cnx().object_server();
@@ -132,8 +131,7 @@ impl<T: FileChooserImpl, R: RequestImpl> FileChooser<T, R> {
         object_server.at(IMPL_PATH, iface).await?;
         let provider = Self {
             receiver: RefCell::new(Some(receiver)),
-            imp,
-            request_imp: Arc::new(request),
+            imp: Arc::new(imp),
             cnx: backend.cnx().clone(),
         };
 
@@ -149,7 +147,7 @@ impl<T: FileChooserImpl, R: RequestImpl> FileChooser<T, R> {
 
         match response {
             Some(Action::OpenFile(path, app_id, window_identifier, title, options, sender)) => {
-                let request = Request::new(Arc::clone(&self.request_imp), path, &self.cnx).await?;
+                let request = Request::new(Arc::clone(&self.imp), path, &self.cnx).await?;
                 let results = self
                     .imp
                     .open_file(app_id, window_identifier, &title, options)
@@ -158,7 +156,7 @@ impl<T: FileChooserImpl, R: RequestImpl> FileChooser<T, R> {
                 request.next().await?;
             }
             Some(Action::SaveFile(path, app_id, window_identifier, title, options, sender)) => {
-                let request = Request::new(Arc::clone(&self.request_imp), path, &self.cnx).await?;
+                let request = Request::new(Arc::clone(&self.imp), path, &self.cnx).await?;
                 let results = self
                     .imp
                     .save_file(app_id, window_identifier, &title, options)
@@ -167,7 +165,7 @@ impl<T: FileChooserImpl, R: RequestImpl> FileChooser<T, R> {
                 request.next().await?;
             }
             Some(Action::SaveFiles(path, app_id, window_identifier, title, options, sender)) => {
-                let request = Request::new(Arc::clone(&self.request_imp), path, &self.cnx).await?;
+                let request = Request::new(Arc::clone(&self.imp), path, &self.cnx).await?;
                 let results = self
                     .imp
                     .save_files(app_id, window_identifier, &title, options)
