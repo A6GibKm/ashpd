@@ -1,11 +1,12 @@
-use std::{cell::RefCell, sync::Arc};
+use async_std::sync::Mutex;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures_channel::{
     mpsc::{Receiver, Sender},
     oneshot,
 };
-use futures_util::{FutureExt, StreamExt};
+use futures_util::SinkExt;
 use zbus::dbus_interface;
 
 use crate::{
@@ -114,13 +115,10 @@ pub trait FileChooserImpl {
 }
 
 pub struct FileChooser<T: FileChooserImpl + RequestImpl> {
-    receiver: RefCell<Option<Receiver<Action>>>,
+    receiver: Arc<Mutex<Receiver<Action>>>,
     imp: Arc<T>,
     cnx: zbus::Connection,
 }
-
-unsafe impl<T: Send + FileChooserImpl + RequestImpl> Send for FileChooser<T> {}
-unsafe impl<T: Sync + FileChooserImpl + RequestImpl> Sync for FileChooser<T> {}
 
 impl<T: FileChooserImpl + RequestImpl> FileChooser<T> {
     pub async fn new(imp: T, backend: &Backend) -> zbus::Result<Self> {
@@ -130,7 +128,7 @@ impl<T: FileChooserImpl + RequestImpl> FileChooser<T> {
 
         object_server.at(IMPL_PATH, iface).await?;
         let provider = Self {
-            receiver: RefCell::new(Some(receiver)),
+            receiver: Arc::new(Mutex::new(receiver)),
             imp: Arc::new(imp),
             cnx: backend.cnx().clone(),
         };
@@ -138,15 +136,9 @@ impl<T: FileChooserImpl + RequestImpl> FileChooser<T> {
         Ok(provider)
     }
 
-    pub async fn next(&self) -> zbus::fdo::Result<()> {
-        let response = self
-            .receiver
-            .borrow_mut()
-            .as_mut()
-            .and_then(|receiver| receiver.try_next().unwrap_or(None));
-
-        match response {
-            Some(Action::OpenFile(path, app_id, window_identifier, title, options, sender)) => {
+    pub async fn activate(&self, action: Action) -> Result<(), crate::Error> {
+        match action {
+            Action::OpenFile(path, app_id, window_identifier, title, options, sender) => {
                 let request = Request::new(Arc::clone(&self.imp), path, &self.cnx).await?;
                 let results = self
                     .imp
@@ -155,7 +147,7 @@ impl<T: FileChooserImpl + RequestImpl> FileChooser<T> {
                 let _ = sender.send(results);
                 request.next().await?;
             }
-            Some(Action::SaveFile(path, app_id, window_identifier, title, options, sender)) => {
+            Action::SaveFile(path, app_id, window_identifier, title, options, sender) => {
                 let request = Request::new(Arc::clone(&self.imp), path, &self.cnx).await?;
                 let results = self
                     .imp
@@ -164,7 +156,7 @@ impl<T: FileChooserImpl + RequestImpl> FileChooser<T> {
                 let _ = sender.send(results);
                 request.next().await?;
             }
-            Some(Action::SaveFiles(path, app_id, window_identifier, title, options, sender)) => {
+            Action::SaveFiles(path, app_id, window_identifier, title, options, sender) => {
                 let request = Request::new(Arc::clone(&self.imp), path, &self.cnx).await?;
                 let results = self
                     .imp
@@ -173,14 +165,17 @@ impl<T: FileChooserImpl + RequestImpl> FileChooser<T> {
                 let _ = sender.send(results);
                 request.next().await?;
             }
-            None => (),
         }
 
         Ok(())
     }
+
+    pub fn try_next(&self) -> Option<Action> {
+        self.receiver.try_lock().unwrap().try_next().ok().flatten()
+    }
 }
 
-enum Action {
+pub enum Action {
     OpenFile(
         OwnedObjectPath,
         AppID,
@@ -206,21 +201,22 @@ enum Action {
         oneshot::Sender<Response<SaveFilesResults>>,
     ),
 }
-
 struct FileChooserInterface {
-    sender: Sender<Action>,
+    sender: Arc<Mutex<Sender<Action>>>,
 }
 
 impl FileChooserInterface {
     pub fn new(sender: Sender<Action>) -> Self {
-        Self { sender }
+        Self {
+            sender: Arc::new(Mutex::new(sender)),
+        }
     }
 }
 
 #[dbus_interface(name = "org.freedesktop.impl.portal.FileChooser")]
 impl FileChooserInterface {
     async fn open_file(
-        &mut self,
+        &self,
         handle: OwnedObjectPath,
         app_id: AppID,
         window_identifier: WindowIdentifierType,
@@ -228,21 +224,25 @@ impl FileChooserInterface {
         options: OpenFileOptions,
     ) -> Response<OpenFileResults> {
         let (sender, receiver) = futures_channel::oneshot::channel();
-        let _ = self.sender.try_send(Action::OpenFile(
-            handle,
-            app_id,
-            window_identifier,
-            title,
-            options,
-            sender,
-        ));
-        let mut stream = receiver.into_stream();
+        let _ = self
+            .sender
+            .lock()
+            .await
+            .send(Action::OpenFile(
+                handle,
+                app_id,
+                window_identifier,
+                title,
+                options,
+                sender,
+            ))
+            .await;
 
-        stream.next().await.unwrap().unwrap()
+        receiver.await.unwrap()
     }
 
     async fn save_file(
-        &mut self,
+        &self,
         handle: OwnedObjectPath,
         app_id: AppID,
         window_identifier: WindowIdentifierType,
@@ -250,21 +250,25 @@ impl FileChooserInterface {
         options: SaveFileOptions,
     ) -> Response<SaveFileResults> {
         let (sender, receiver) = futures_channel::oneshot::channel();
-        let _ = self.sender.try_send(Action::SaveFile(
-            handle,
-            app_id,
-            window_identifier,
-            title,
-            options,
-            sender,
-        ));
-        let mut stream = receiver.into_stream();
+        let _ = self
+            .sender
+            .lock()
+            .await
+            .send(Action::SaveFile(
+                handle,
+                app_id,
+                window_identifier,
+                title,
+                options,
+                sender,
+            ))
+            .await;
 
-        stream.next().await.unwrap().unwrap()
+        receiver.await.unwrap()
     }
 
     async fn save_files(
-        &mut self,
+        &self,
         handle: OwnedObjectPath,
         app_id: AppID,
         window_identifier: WindowIdentifierType,
@@ -272,16 +276,20 @@ impl FileChooserInterface {
         options: SaveFilesOptions,
     ) -> Response<SaveFilesResults> {
         let (sender, receiver) = futures_channel::oneshot::channel();
-        let _ = self.sender.try_send(Action::SaveFiles(
-            handle,
-            app_id,
-            window_identifier,
-            title,
-            options,
-            sender,
-        ));
-        let mut stream = receiver.into_stream();
+        let _ = self
+            .sender
+            .lock()
+            .await
+            .send(Action::SaveFiles(
+                handle,
+                app_id,
+                window_identifier,
+                title,
+                options,
+                sender,
+            ))
+            .await;
 
-        stream.next().await.unwrap().unwrap()
+        receiver.await.unwrap()
     }
 }
