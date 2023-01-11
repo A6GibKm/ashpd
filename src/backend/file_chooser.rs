@@ -1,4 +1,7 @@
 use async_std::sync::Mutex;
+use std::ffi::{CString, OsStr};
+use std::os::unix::ffi::OsStrExt;
+use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -7,6 +10,7 @@ use futures_channel::{
     oneshot,
 };
 use futures_util::SinkExt;
+use serde::Deserialize;
 use zbus::dbus_interface;
 
 use crate::{
@@ -21,6 +25,42 @@ use crate::{
     zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
     AppID, WindowIdentifierType,
 };
+
+// FIXME Manually implement Deserialize to catch non null-terminated arrays.
+// FIXME Use OsString directly once
+// https://gitlab.freedesktop.org/dbus/zbus/-/merge_requests/638 is merged.
+/// A file name represented as a null-terminated byte array.
+///
+/// Implements `AsRef<Path>`.
+#[derive(Debug, Default)]
+pub struct FileName(CString);
+
+impl AsRef<Path> for FileName {
+    fn as_ref(&self) -> &Path {
+        let os_str = OsStr::from_bytes(self.0.as_bytes());
+
+        Path::new(os_str)
+    }
+}
+
+impl Type for FileName {
+    fn signature() -> zbus::zvariant::Signature<'static> {
+        <&[u8]>::signature()
+    }
+}
+
+impl<'de> Deserialize<'de> for FileName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let bytes = <Vec<u8>>::deserialize(deserializer)?;
+        let c_string = CString::from_vec_with_nul(bytes)
+            .map_err(|_| serde::de::Error::custom("Bytes are not null-terminated"))?;
+
+        Ok(Self(c_string))
+    }
+}
 
 // Does not coincide with the one in desktop/file_chooser.rs
 #[derive(DeserializeDict, Type, Debug, Default)]
@@ -46,8 +86,8 @@ pub struct SaveFileOptions {
     pub current_filter: Option<FileFilter>,
     pub choices: Option<Vec<Choice>>,
     pub current_name: Option<String>,
-    pub current_folder: Option<Vec<u8>>,
-    pub current_file: Option<Vec<u8>>,
+    pub current_folder: Option<FileName>,
+    pub current_file: Option<FileName>,
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
@@ -59,8 +99,8 @@ pub struct SaveFilesOptions {
     pub accept_label: Option<String>,
     pub modal: Option<bool>,
     pub choices: Option<Vec<Choice>>,
-    pub current_folder: Option<Vec<u8>>,
-    pub files: Option<Vec<Vec<u8>>>,
+    pub current_folder: Option<FileName>,
+    pub files: Option<Vec<FileName>>,
 }
 
 #[derive(DeserializeDict, SerializeDict, Type, Debug, Default)]
