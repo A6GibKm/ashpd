@@ -19,38 +19,9 @@ use std::path::Path;
 use zbus::zvariant::{from_slice, EncodingContext};
 
 use crate::external_window::ExternalWindow;
-use crate::Action;
 
-pub enum FileChooserAction {
-    OpenFile(
-        String,
-        WindowIdentifierType,
-        OpenFileOptions,
-        oneshot::Sender<Response<OpenFileResults>>,
-    ),
-    SaveFile(
-        String,
-        WindowIdentifierType,
-        SaveFileOptions,
-        oneshot::Sender<Response<SaveFileResults>>,
-    ),
-    SaveFiles(
-        String,
-        WindowIdentifierType,
-        SaveFilesOptions,
-        oneshot::Sender<Response<SaveFilesResults>>,
-    ),
-}
-
-pub struct FileChooser {
-    sender: glib::Sender<Action>,
-}
-
-impl FileChooser {
-    pub fn new(sender: glib::Sender<Action>) -> Self {
-        Self { sender }
-    }
-}
+#[derive(Default)]
+pub struct FileChooser;
 
 #[async_trait]
 impl RequestImpl for FileChooser {
@@ -70,20 +41,15 @@ impl FileChooserImpl for FileChooser {
     ) -> Response<OpenFileResults> {
         log::debug!("IN OpenFile({app_id}, {window_identifier}, {title}, {options:?}");
 
-        let (sender, receiver) = oneshot::channel::<Response<OpenFileResults>>();
-
         let title = title.to_owned();
-
-        self.sender
-            .send(Action::FileChooser(FileChooserAction::OpenFile(
-                title,
-                window_identifier,
-                options,
-                sender,
-            )))
-            .unwrap();
-
+        let (sender, receiver) = oneshot::channel::<Response<OpenFileResults>>();
+        let ctx = glib::MainContext::default();
+        ctx.spawn_local(async move {
+            let response = open_file_dialog(&title, window_identifier, options).await;
+            let _ = sender.send(response);
+        });
         let response = receiver.await.unwrap();
+
         log::debug!("OUT OpenFile({response:?})");
 
         response
@@ -98,20 +64,15 @@ impl FileChooserImpl for FileChooser {
     ) -> Response<SaveFileResults> {
         log::debug!("IN SaveFile({app_id}, {window_identifier}, {title}, {options:?}");
 
-        let (sender, receiver) = oneshot::channel::<Response<SaveFileResults>>();
-
         let title = title.to_owned();
-
-        self.sender
-            .send(Action::FileChooser(FileChooserAction::SaveFile(
-                title,
-                window_identifier,
-                options,
-                sender,
-            )))
-            .unwrap();
-
+        let (sender, receiver) = oneshot::channel();
+        let ctx = glib::MainContext::default();
+        ctx.spawn_local(async move {
+            let response = save_file_dialog(&title, window_identifier, options).await;
+            let _ = sender.send(response);
+        });
         let response = receiver.await.unwrap();
+
         log::debug!("OUT SaveFile({response:?})");
 
         response
@@ -126,47 +87,19 @@ impl FileChooserImpl for FileChooser {
     ) -> Response<SaveFilesResults> {
         log::debug!("IN SaveFiles({app_id}, {window_identifier}, {title}, {options:?}");
 
-        let (sender, receiver) = oneshot::channel::<Response<SaveFilesResults>>();
-
         let title = title.to_owned();
-
-        self.sender
-            .send(Action::FileChooser(FileChooserAction::SaveFiles(
-                title,
-                window_identifier,
-                options,
-                sender,
-            )))
-            .unwrap();
-
+        let (sender, receiver) = oneshot::channel();
+        let ctx = glib::MainContext::default();
+        ctx.spawn_local(async move {
+            let response = save_files_dialog(&title, window_identifier, options).await;
+            let _ = sender.send(response);
+        });
         let response = receiver.await.unwrap();
+
         log::debug!("OUT SaveFiles({response:?})");
 
         response
     }
-}
-
-pub fn handle_action(action: FileChooserAction) -> glib::Continue {
-    // We need to return to the main context to execute GTK code.
-    let ctx = glib::MainContext::default();
-    ctx.spawn_local(async move {
-        match action {
-            FileChooserAction::OpenFile(title, window_identifier, options, sender) => {
-                let response = open_file_dialog(&title, window_identifier, options).await;
-                sender.send(response).unwrap();
-            }
-            FileChooserAction::SaveFile(title, window_identifier, options, sender) => {
-                let response = save_file_dialog(&title, window_identifier, options).await;
-                sender.send(response).unwrap();
-            }
-            FileChooserAction::SaveFiles(title, window_identifier, options, sender) => {
-                let response = save_files_dialog(&title, window_identifier, options).await;
-                sender.send(response).unwrap();
-            }
-        };
-    });
-
-    glib::Continue(true)
 }
 
 // FIXME Use https://github.com/gtk-rs/gtk4-rs/pull/1234 once it is in
