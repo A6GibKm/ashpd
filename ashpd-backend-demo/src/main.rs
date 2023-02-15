@@ -2,6 +2,7 @@ use ashpd::backend::Backend;
 use gettextrs::LocaleCategory;
 use gtk::glib;
 use std::sync::Arc;
+use futures::join;
 
 mod external_wayland_window;
 mod external_window;
@@ -33,7 +34,7 @@ fn main() -> Result<(), ashpd::Error> {
     // Avoid pointless and confusing recursion
     glib::unsetenv("GTK_USE_PORTAL");
     glib::setenv("ADW_DISABLE_PORTAL", "1", true).unwrap();
-    glib::setenv("GSK_RENDERER", "cairo", true).unwrap();
+    // glib::setenv("GSK_RENDERER", "cairo", true).unwrap();
 
     gtk::init().unwrap();
     adw::init().unwrap();
@@ -53,25 +54,39 @@ async fn init_interfaces() -> Result<(), ashpd::Error> {
     let settings = Arc::new(ashpd::backend::Settings::new(Settings::default(), &backend).await?);
     let file_chooser =
         Arc::new(ashpd::backend::FileChooser::new(FileChooser::default(), &backend).await?);
-
+    use futures::FutureExt;
     loop {
-        if let Some(action) = settings.try_next() {
-            let imp = Arc::clone(&settings);
-            if let Err(err) = imp.activate(action).await {
-                log::error!("Could not handle settings: {err:?}");
-            }
-        };
-        if let Some(action) = wallpaper.try_next() {
-            let imp = Arc::clone(&wallpaper);
-            if let Err(err) = imp.activate(action).await {
-                log::error!("Could not handle wallpaper: {err:?}");
-            }
-        };
-        if let Some(action) = file_chooser.try_next() {
+        // let a = file_chooser.next().fuse();
+        // futures::select! {
+        //     a_res = a => {
+        //         if let Some(action) = a_res {
+        //             let imp = Arc::clone(&file_chooser);
+        //             let ctx = glib::MainContext::default();
+        //             ctx.spawn_local(async move {
+        //                 if let Err(err) = imp.activate(action).await {
+        //                     log::error!("Could not handle file chooser: {err:?}");
+        //                 }
+        //             });
+        //         }
+        //     }
+        // };
+        // if let Some(action) = settings.next().await {
+        //     let imp = Arc::clone(&settings);
+        //     if let Err(err) = imp.activate(action).await {
+        //         log::error!("Could not handle settings: {err:?}");
+        //     }
+        // };
+        // if let Some(action) = wallpaper.next().await {
+        //     let imp = Arc::clone(&wallpaper);
+        //     if let Err(err) = imp.activate(action).await {
+        //         log::error!("Could not handle wallpaper: {err:?}");
+        //     }
+        // };
+        if let Some(action) = file_chooser.next().await {
             let imp = Arc::clone(&file_chooser);
             if let Err(err) = imp.activate(action).await {
                 log::error!("Could not handle file chooser: {err:?}");
             }
-        };
+        }
     }
 }

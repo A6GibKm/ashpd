@@ -6,7 +6,7 @@ use futures_channel::{
     mpsc::{Receiver, Sender},
     oneshot,
 };
-use futures_util::SinkExt;
+use futures_util::{SinkExt, StreamExt};
 use zbus::dbus_interface;
 
 use crate::{
@@ -57,8 +57,8 @@ impl<T: SettingsImpl> Settings<T> {
         Ok(())
     }
 
-    pub fn try_next(&self) -> Option<Action> {
-        self.receiver.try_lock().unwrap().try_next().ok().flatten()
+    pub async fn next(&self) -> Option<Action> {
+        self.receiver.lock().await.next().await
     }
 }
 

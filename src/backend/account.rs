@@ -6,7 +6,7 @@ use futures_channel::{
     mpsc::{Receiver, Sender},
     oneshot,
 };
-use futures_util::SinkExt;
+use futures_util::{SinkExt, StreamExt};
 use zbus::dbus_interface;
 
 use super::{request::Request, RequestImpl};
@@ -61,10 +61,6 @@ impl<T: AccountImpl + RequestImpl> Account<T> {
         Ok(provider)
     }
 
-    pub fn try_next(&self) -> Option<Action> {
-        self.receiver.try_lock().unwrap().try_next().ok().flatten()
-    }
-
     pub async fn activate(&self, action: Action) -> Result<(), crate::Error> {
         let Action::GetUserInformation(handle_path, app_id, window_identifier, options, sender) =
             action;
@@ -77,6 +73,10 @@ impl<T: AccountImpl + RequestImpl> Account<T> {
         request.next().await?;
 
         Ok(())
+    }
+
+    pub async fn next(&self) -> Option<Action> {
+            self.receiver.lock().await.next().await
     }
 }
 
