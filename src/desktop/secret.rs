@@ -99,18 +99,22 @@ pub async fn retrieve() -> Result<Vec<u8>, Error> {
     let mut x1 = {
         let (x1, mut x2) = UnixStream::pair()?;
         proxy.retrieve(&x2).await?;
-        x2.shutdown().await?;
+        // x2.shutdown().await?;
         x1
     };
     #[cfg(feature = "async-std")]
     let mut x1 = {
         let (x1, x2) = UnixStream::pair()?;
         proxy.retrieve(&x2).await?;
-        x2.shutdown(Shutdown::Write)?;
+        // x2.shutdown(Shutdown::Write)?;
         x1
     };
 
+    #[cfg(feature = "tracing")]
+    tracing::error!("reading");
     x1.read_to_end(&mut buf).await?;
+    #[cfg(feature = "tracing")]
+    tracing::error!("read: {buf:?}");
 
     Ok(buf)
 }
