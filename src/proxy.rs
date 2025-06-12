@@ -3,7 +3,7 @@ use std::{fmt::Debug, future::ready, ops::Deref, sync::OnceLock};
 
 use futures_util::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
-use zbus::zvariant::{ObjectPath, OwnedValue, Type};
+use zbus::zvariant::{ObjectPath, OwnedValue, OwnedObjectPath, Type};
 #[cfg(feature = "tracing")]
 use zbus::Message;
 
@@ -139,14 +139,9 @@ impl<'a> Proxy<'a> {
     where
         T: for<'de> Deserialize<'de> + Type + Debug,
     {
-        let mut request = Request::from_unique_name(handle_token).await?;
-        futures_util::try_join!(request.prepare_response(), async {
-            self.call_method(method_name, &body)
-                .await
-                .map_err::<PortalError, _>(From::from)
-                .map_err(From::from)
-        })?;
-        Ok(request)
+        let request_path = self.call::<OwnedObjectPath>(method_name, &body).await?;
+
+        Request::new(request_path).await
     }
 
     pub(crate) async fn empty_request(

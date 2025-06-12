@@ -98,14 +98,16 @@ pub async fn retrieve() -> Result<Vec<u8>, Error> {
     #[cfg(feature = "tokio")]
     let mut x1 = {
         let (x1, mut x2) = UnixStream::pair()?;
-        proxy.retrieve(&x2).await?;
+        let mut request = proxy.retrieve(&x2).await?;
+        request.prepare_response().await?;
         x2.shutdown().await?;
         x1
     };
     #[cfg(feature = "async-std")]
     let mut x1 = {
         let (x1, x2) = UnixStream::pair()?;
-        proxy.retrieve(&x2).await?;
+        let mut request = proxy.retrieve(&x2).await?;
+        request.prepare_response().await?;
         x2.shutdown(Shutdown::Write)?;
         x1
     };
